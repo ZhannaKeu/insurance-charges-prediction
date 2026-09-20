@@ -1,0 +1,19 @@
+# Virtual environments
+.venv/
+.venv_old/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Streamlit
+.streamlit/
+
+# Logs
+*.log

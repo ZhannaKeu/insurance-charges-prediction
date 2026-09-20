@@ -1,0 +1,21 @@
+{
+  "experiment": "experiment_2_1000",
+  "epochs_max": 1000,
+  "epochs_actual": 1000,
+  "batch_size": 64,
+  "early_stopping": {
+    "monitor": "val_loss",
+    "patience": 30,
+    "restore_best_weights": true,
+    "triggered": false
+  },
+  "minimum_validation_loss_epoch": 1000,
+  "minimum_validation_loss": 23353308.0,
+  "validation_r2_continued_growing": true,
+  "mae": 2799.3193399701495,
+  "mse": 25380161.75465222,
+  "rmse": 5037.872741014031,
+  "r2": 0.8512799335002574,
+  "baseline_r2": 0.17853598869154674,
+  "r2_change": 0.6727439448087107
+}
