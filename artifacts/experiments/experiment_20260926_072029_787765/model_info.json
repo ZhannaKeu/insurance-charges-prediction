@@ -1,0 +1,27 @@
+{
+  "experiment_id": "experiment_20260926_072029_787765",
+  "trained_at_utc": "2026-09-26T07:20:36.219856+00:00",
+  "original_rows": 1338,
+  "rows_after_deduplication": 1337,
+  "train_rows": 935,
+  "validation_rows": 201,
+  "test_rows": 201,
+  "preprocessed_feature_count": 11,
+  "mae": 8173.972440093751,
+  "mse": 140188813.11630675,
+  "rmse": 11840.13568825572,
+  "r2": 0.17853598370563994,
+  "training_parameters": {
+    "epochs_max": 100,
+    "epochs_actual": 100,
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "early_stopping_enabled": true,
+    "patience": 30
+  },
+  "training_time_seconds": 6.224401332990965,
+  "early_stopping_triggered": false,
+  "minimum_validation_loss_epoch": 100,
+  "minimum_validation_loss": 144675936.0,
+  "random_seed": 42
+}

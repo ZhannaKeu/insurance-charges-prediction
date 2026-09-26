@@ -1,4 +1,4 @@
-"""Общие компоненты предобработки для обучения и прогнозирования."""
+# Общие компоненты предобработки для обучения и прогнозирования
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -6,7 +6,7 @@ from sklearn.utils.validation import check_array, check_is_fitted
 
 
 class PercentileClipper(BaseEstimator, TransformerMixin):
-    """Ограничивает признаки процентилями, вычисленными во время fit."""
+    # Ограничивает признаки процентилями, вычисленными во время fit
 
     def __init__(self, lower_percentile=1.0, upper_percentile=99.0):
         self.lower_percentile = lower_percentile

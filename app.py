@@ -236,8 +236,6 @@ def experiments_page():
     experiment_id = st.selectbox("Выберите эксперимент", experiments["experiment"])
     row = experiments.loc[experiments["experiment"] == experiment_id].iloc[0]
     directory = EXPERIMENTS_DIR / experiment_id
-    if not directory.exists():
-        directory = ARTIFACTS_DIR / experiment_id  # Старый каталог baseline_100.
 
     try:
         info = load_json(directory / "model_info.json")

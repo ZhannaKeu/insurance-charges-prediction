@@ -1,4 +1,4 @@
-"""Обучение регрессионной нейронной сети для прогноза medical charges."""
+# Обучение регрессионной нейронной сети для прогноза medical charges
 
 import csv
 import json
@@ -50,7 +50,7 @@ SEED = 42
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    """Параметры, которые позже сможет передавать веб-интерфейс."""
+    # Параметры, которые позже сможет передавать веб-интерфейс
 
     epochs: int = 1000
     batch_size: int = 64
@@ -86,7 +86,7 @@ ConfigInput = Union[TrainingConfig, Mapping[str, Any]]
 
 
 def normalize_config(config: Optional[ConfigInput] = None):
-    """Преобразует словарь веб-формы в проверенную конфигурацию."""
+    # Преобразует словарь веб-формы в проверенную конфигурацию
     if config is None:
         normalized = TrainingConfig()
     elif isinstance(config, TrainingConfig):
@@ -113,7 +113,8 @@ def set_random_seeds(seed=SEED):
 
 
 def load_and_check_data(path=DATA_PATH):
-    """Загружает CSV, проверяет схему и выводит краткий профиль данных."""
+    # Загружает CSV, проверяет схему и выводит краткий профиль данных
+
     if not path.exists():
         raise FileNotFoundError(f"Датасет не найден: {path}")
     data = pd.read_csv(path)
@@ -138,7 +139,7 @@ def load_and_check_data(path=DATA_PATH):
 
 
 def split_data(data):
-    """Удаляет дубликаты и делит данные на 70/15/15."""
+    # Удаляет дубликаты и делит данные на 70/15/15
     clean_data = data.drop_duplicates().reset_index(drop=True)
     X = clean_data[FEATURE_COLUMNS]
     y = clean_data[TARGET_COLUMN]
@@ -152,7 +153,7 @@ def split_data(data):
 
 
 def build_preprocessor():
-    """Создаёт preprocessing, статистики которого обучаются только на train."""
+    #Создаёт preprocessing, статистики которого обучаются только на train
     # Медиана устойчива к выбросам и подходит для числовых признаков insurance.
     numeric_pipeline = Pipeline(
         [("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]
@@ -181,7 +182,8 @@ def build_preprocessor():
 
 
 def prepare_data(preprocessor, X_train, X_validation, X_test):
-    """Обучает preprocessing на train и только преобразует validation/test."""
+    # Обучает preprocessing на train и только преобразует validation/test
+    
     processed = (
         preprocessor.fit_transform(X_train),
         preprocessor.transform(X_validation),
@@ -191,7 +193,8 @@ def prepare_data(preprocessor, X_train, X_validation, X_test):
 
 
 def build_model(input_features, learning_rate):
-    """Создаёт фиксированную базовую нейронную сеть для регрессии."""
+    # Создаёт фиксированную базовую нейронную сеть для регрессии
+
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=(input_features,)),
@@ -209,7 +212,7 @@ def build_model(input_features, learning_rate):
 
 
 class ValidationR2Callback(tf.keras.callbacks.Callback):
-    """Сохраняет R² на validation после каждой эпохи."""
+    # Сохраняет R² на validation после каждой эпохи
 
     def __init__(self, X_validation, y_validation):
         super().__init__()
@@ -226,7 +229,8 @@ class ValidationR2Callback(tf.keras.callbacks.Callback):
 
 
 def fit_model(model, config, X_train, y_train, X_validation, y_validation):
-    """Обучает Keras-модель и возвращает историю и длительность fit."""
+    # Обучает Keras-модель и возвращает историю и длительность fit
+    
     r2_callback = ValidationR2Callback(X_validation, y_validation)
     callbacks = [r2_callback]
     if config.early_stopping_enabled:
@@ -251,7 +255,7 @@ def fit_model(model, config, X_train, y_train, X_validation, y_validation):
 
 
 def evaluate_model(model, X_test, y_test):
-    """Рассчитывает финальные метрики исключительно на test."""
+    # Рассчитывает финальные метрики исключительно на test
     y_true = np.asarray(y_test, dtype=float)
     y_pred = model.predict(X_test, verbose=0).reshape(-1)
     mse = float(mean_squared_error(y_true, y_pred))
@@ -290,7 +294,7 @@ def validate_experiment_id(experiment_id):
 
 
 def save_plots(history, validation_r2, y_true, y_pred, output_dir):
-    """Сохраняет графики конкретного эксперимента."""
+    # Сохраняет графики конкретного эксперимента
     epochs = range(1, len(history.history["loss"]) + 1)
     plt.figure(figsize=(8, 5))
     plt.plot(epochs, history.history["loss"], label="Train loss")
@@ -327,7 +331,8 @@ def save_plots(history, validation_r2, y_true, y_pred, output_dir):
 
 
 def append_experiment_row(experiment_id, result):
-    """Добавляет одну строку в простой журнал экспериментов."""
+    # Добавляет одну строку в простой журнал экспериментов
+    
     fieldnames = [
         "experiment", "epochs_max", "epochs_actual", "batch_size",
         "learning_rate", "early_stopping", "patience", "training_time_seconds",
@@ -358,7 +363,8 @@ def save_experiment(
     model, preprocessor, model_info, history, validation_r2, y_true, y_pred,
     experiment_id,
 ):
-    """Сохраняет новый эксперимент, не изменяя active-модель."""
+    # Сохраняет новый эксперимент, не изменяя active-модель.
+
     output_dir = EXPERIMENTS_DIR / experiment_id
     if output_dir.exists():
         raise FileExistsError(f"Эксперимент уже существует: {experiment_id}")
@@ -373,7 +379,7 @@ def save_experiment(
 
 
 def activate_experiment(experiment_id):
-    """Явно делает сохранённый эксперимент моделью для predict.py."""
+    # Явно делает сохранённый эксперимент моделью для predict.py
     validate_experiment_id(experiment_id)
     source_dir = EXPERIMENTS_DIR / experiment_id
     required = {
@@ -390,7 +396,7 @@ def activate_experiment(experiment_id):
 
 
 def train_model(config: Optional[ConfigInput] = None, experiment_id=None):
-    """Выполняет полный цикл и возвращает данные для будущего интерфейса."""
+    # Выполняет полный цикл и возвращает данные для будущего интерфейса
     config = normalize_config(config)
     experiment_id = experiment_id or make_experiment_id()
     validate_experiment_id(experiment_id)
