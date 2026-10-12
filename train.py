@@ -7,6 +7,7 @@ import os
 import random
 import re
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -124,6 +125,18 @@ def load_and_check_data(path=DATA_PATH):
     data = data[FEATURE_COLUMNS + [TARGET_COLUMN]].copy()
     for column in NUMERIC_COLUMNS + [TARGET_COLUMN]:
         data[column] = pd.to_numeric(data[column], errors="raise")
+    for column in NUMERIC_COLUMNS + [TARGET_COLUMN]:
+        values = data[column].to_numpy(dtype=float)
+        invalid_values = ~np.isfinite(values)
+        if column in NUMERIC_COLUMNS:
+            invalid_values &= ~np.isnan(values)
+        if invalid_values.any():
+            value_kind = (
+                "NaN или бесконечные значения"
+                if column == TARGET_COLUMN
+                else "бесконечные значения"
+            )
+            raise ValueError(f"Колонка '{column}' содержит {value_kind}")
 
     print("\nПроверка исходного датасета")
     print(f"Размер: {data.shape[0]} строк, {data.shape[1]} столбцов")
@@ -331,55 +344,101 @@ def save_plots(history, validation_r2, y_true, y_pred, output_dir):
 
 
 def append_experiment_row(experiment_id, result):
-    # Добавляет одну строку в простой журнал экспериментов
-    
+    """Атомарно добавляет результат в CSV-журнал."""
     fieldnames = [
         "experiment", "epochs_max", "epochs_actual", "batch_size",
         "learning_rate", "early_stopping", "patience", "training_time_seconds",
         "MAE", "MSE", "RMSE", "R2",
     ]
-    write_header = not EXPERIMENTS_CSV_PATH.exists()
-    with EXPERIMENTS_CSV_PATH.open("a", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        if write_header:
+    row = {
+        "experiment": experiment_id,
+        "epochs_max": result["epochs_max"],
+        "epochs_actual": result["epochs_actual"],
+        "batch_size": result["batch_size"],
+        "learning_rate": result["learning_rate"],
+        "early_stopping": result["early_stopping_enabled"],
+        "patience": result["patience"],
+        "training_time_seconds": result["training_time_seconds"],
+        "MAE": result["mae"], "MSE": result["mse"],
+        "RMSE": result["rmse"], "R2": result["r2"],
+    }
+    EXPERIMENTS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_rows = []
+    existing_fields = []
+    if EXPERIMENTS_CSV_PATH.exists():
+        with EXPERIMENTS_CSV_PATH.open(newline="", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            existing_fields = [name for name in (reader.fieldnames or []) if name]
+            existing_rows = list(reader)
+    output_fields = list(dict.fromkeys([*existing_fields, *fieldnames]))
+
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            newline="",
+            encoding="utf-8",
+            prefix=f".{EXPERIMENTS_CSV_PATH.name}.",
+            suffix=".tmp",
+            dir=EXPERIMENTS_CSV_PATH.parent,
+            delete=False,
+        ) as file:
+            temporary_path = Path(file.name)
+            writer = csv.DictWriter(file, fieldnames=output_fields)
             writer.writeheader()
-        writer.writerow(
-            {
-                "experiment": experiment_id,
-                "epochs_max": result["epochs_max"],
-                "epochs_actual": result["epochs_actual"],
-                "batch_size": result["batch_size"],
-                "learning_rate": result["learning_rate"],
-                "early_stopping": result["early_stopping_enabled"],
-                "patience": result["patience"],
-                "training_time_seconds": result["training_time_seconds"],
-                "MAE": result["mae"], "MSE": result["mse"],
-                "RMSE": result["rmse"], "R2": result["r2"],
-            }
-        )
+            for existing_row in existing_rows:
+                writer.writerow(
+                    {name: existing_row.get(name, "") for name in output_fields}
+                )
+            writer.writerow(row)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, EXPERIMENTS_CSV_PATH)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def save_experiment(
     model, preprocessor, model_info, history, validation_r2, y_true, y_pred,
     experiment_id,
 ):
-    # Сохраняет новый эксперимент, не изменяя active-модель.
-
+    """Публикует эксперимент только после полной записи его артефактов."""
+    validate_experiment_id(experiment_id)
     output_dir = EXPERIMENTS_DIR / experiment_id
     if output_dir.exists():
         raise FileExistsError(f"Эксперимент уже существует: {experiment_id}")
-    output_dir.mkdir(parents=True)
-    model.save(output_dir / "model.keras")
-    joblib.dump(preprocessor, output_dir / "preprocessor.pkl")
-    (output_dir / "model_info.json").write_text(
-        json.dumps(model_info, ensure_ascii=False, indent=2), encoding="utf-8"
+    EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(
+        tempfile.mkdtemp(prefix=f".{experiment_id}.staging-", dir=EXPERIMENTS_DIR)
     )
-    save_plots(history, validation_r2, y_true, y_pred, output_dir)
+    try:
+        model.save(staging_dir / "model.keras")
+        joblib.dump(preprocessor, staging_dir / "preprocessor.pkl")
+        (staging_dir / "model_info.json").write_text(
+            json.dumps(model_info, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        save_plots(history, validation_r2, y_true, y_pred, staging_dir)
+        required_files = [
+            "model.keras", "preprocessor.pkl", "model_info.json",
+            "loss_history.png", "validation_r2.png", "test_residuals.png",
+        ]
+        incomplete = [
+            name for name in required_files
+            if not (staging_dir / name).is_file()
+            or (staging_dir / name).stat().st_size == 0
+        ]
+        if incomplete:
+            raise OSError(f"Не удалось сохранить файлы эксперимента: {incomplete}")
+        os.replace(staging_dir, output_dir)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
     return output_dir
 
 
 def activate_experiment(experiment_id):
-    # Явно делает сохранённый эксперимент моделью для predict.py
+    """Готовит active-набор отдельно и восстанавливает прежний при ошибке замены."""
     validate_experiment_id(experiment_id)
     source_dir = EXPERIMENTS_DIR / experiment_id
     required = {
@@ -387,12 +446,61 @@ def activate_experiment(experiment_id):
         "preprocessor.pkl": "preprocessor.pkl",
         "model_info.json": "model_info.json",
     }
-    missing = [name for name in required if not (source_dir / name).exists()]
+    missing = [name for name in required if not (source_dir / name).is_file()]
     if missing:
         raise FileNotFoundError(f"В эксперименте отсутствуют файлы: {missing}")
-    ACTIVE_DIR.mkdir(parents=True, exist_ok=True)
-    for source_name, active_name in required.items():
-        shutil.copy2(source_dir / source_name, ACTIVE_DIR / active_name)
+    ACTIVE_DIR.parent.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(
+        tempfile.mkdtemp(prefix=f".{ACTIVE_DIR.name}.staging-", dir=ACTIVE_DIR.parent)
+    )
+    backup_dir = None
+    activated = False
+    try:
+        for source_name, active_name in required.items():
+            shutil.copy2(source_dir / source_name, staging_dir / active_name)
+        incomplete = [
+            name for name in required.values()
+            if not (staging_dir / name).is_file()
+            or (staging_dir / name).stat().st_size == 0
+        ]
+        if incomplete:
+            raise OSError(f"Не удалось подготовить active-файлы: {incomplete}")
+        try:
+            metadata = json.loads(
+                (staging_dir / "model_info.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("В эксперименте некорректный model_info.json") from error
+        if not isinstance(metadata, dict):
+            raise ValueError("model_info.json должен содержать JSON-объект")
+
+        if ACTIVE_DIR.exists():
+            backup_dir = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{ACTIVE_DIR.name}.backup-", dir=ACTIVE_DIR.parent
+                )
+            )
+            backup_dir.rmdir()
+            os.replace(ACTIVE_DIR, backup_dir)
+        try:
+            os.replace(staging_dir, ACTIVE_DIR)
+        except BaseException:
+            if backup_dir is not None and backup_dir.exists():
+                if ACTIVE_DIR.exists():
+                    shutil.rmtree(ACTIVE_DIR)
+                os.replace(backup_dir, ACTIVE_DIR)
+                backup_dir = None
+            raise
+        activated = True
+    except BaseException:
+        if backup_dir is not None and backup_dir.exists() and not ACTIVE_DIR.exists():
+            os.replace(backup_dir, ACTIVE_DIR)
+            backup_dir = None
+        raise
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        if activated and backup_dir is not None:
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def train_model(config: Optional[ConfigInput] = None, experiment_id=None):
@@ -484,7 +592,14 @@ def train_model(config: Optional[ConfigInput] = None, experiment_id=None):
         y_true, y_pred, experiment_id,
     )
     result["artifact_dir"] = str(output_dir)
-    append_experiment_row(experiment_id, result)
+    try:
+        append_experiment_row(experiment_id, result)
+    except BaseException as error:
+        try:
+            shutil.rmtree(output_dir)
+        except OSError as cleanup_error:
+            error.add_note(f"Не удалось удалить незарегистрированный эксперимент: {cleanup_error}")
+        raise
     print(f"\nЭксперимент сохранён в: {output_dir}")
     print("Active-модель не изменена.")
     return result

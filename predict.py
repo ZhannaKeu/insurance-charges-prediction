@@ -14,8 +14,47 @@ MODEL_PATH = ACTIVE_DIR / "insurance_model.keras"
 PREPROCESSOR_PATH = ACTIVE_DIR / "preprocessor.pkl"
 
 
+def _validate_prediction_inputs(age, sex, bmi, children, smoker, region):
+    integer_values = {"age": (age, 18, 100), "children": (children, 0, 10)}
+    normalized = {}
+    for name, (value, minimum, maximum) in integer_values.items():
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)
+        ):
+            raise ValueError(f"{name} должен быть целым числом от {minimum} до {maximum}")
+        if not minimum <= value <= maximum:
+            raise ValueError(f"{name} должен быть в диапазоне от {minimum} до {maximum}")
+        normalized[name] = int(value)
+
+    if isinstance(bmi, (bool, np.bool_)) or not isinstance(
+        bmi, (int, float, np.integer, np.floating)
+    ):
+        raise ValueError("bmi должен быть конечным числом от 10 до 70")
+    bmi = float(bmi)
+    if not np.isfinite(bmi) or not 10 <= bmi <= 70:
+        raise ValueError("bmi должен быть конечным числом от 10 до 70")
+
+    categories = {
+        "sex": (sex, {"female", "male"}),
+        "smoker": (smoker, {"yes", "no"}),
+        "region": (region, {"northeast", "northwest", "southeast", "southwest"}),
+    }
+    for name, (value, allowed) in categories.items():
+        if not isinstance(value, str):
+            raise ValueError(f"{name} должен быть строкой из допустимых значений")
+        value = value.strip().lower()
+        if value not in allowed:
+            options = ", ".join(sorted(allowed))
+            raise ValueError(f"Недопустимое значение {name}: {value!r}. Допустимо: {options}")
+        normalized[name] = value
+
+    normalized["bmi"] = bmi
+    return normalized
+
+
 def predict_charges(age, sex, bmi, children, smoker, region):
     """Принимает исходные признаки и возвращает один прогноз charges."""
+    values = _validate_prediction_inputs(age, sex, bmi, children, smoker, region)
     if not MODEL_PATH.exists() or not PREPROCESSOR_PATH.exists():
         raise FileNotFoundError("Active-модель не найдена. Сначала выберите модель.")
 
@@ -23,12 +62,12 @@ def predict_charges(age, sex, bmi, children, smoker, region):
     person = pd.DataFrame(
         [
             {
-                "age": age,
-                "sex": sex,
-                "bmi": bmi,
-                "children": children,
-                "smoker": smoker,
-                "region": region,
+                "age": values["age"],
+                "sex": values["sex"],
+                "bmi": values["bmi"],
+                "children": values["children"],
+                "smoker": values["smoker"],
+                "region": values["region"],
             }
         ]
     )

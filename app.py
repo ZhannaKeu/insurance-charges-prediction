@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from openai import OpenAI
 
 import pandas as pd
 import streamlit as st
@@ -14,6 +15,155 @@ EXPERIMENTS_DIR = ARTIFACTS_DIR / "experiments"
 EXPERIMENTS_CSV = ARTIFACTS_DIR / "experiments.csv"
 
 st.set_page_config(page_title="Нейронная сеть: медицинские расходы", layout="wide")
+
+
+
+def explain_prediction(prediction, age, sex, bmi, children, smoker, region):
+    client = OpenAI(
+        api_key=st.secrets["OPENAI_API_KEY"],
+        timeout=60.0,
+        max_retries=1
+    )
+
+    prompt = f"""
+Ты — ИИ-помощник приложения для прогнозирования
+страховых медицинских расходов.
+
+Нейронная сеть рассчитала прогноз: ${prediction:,.2f}.
+
+Данные клиента:
+- Возраст: {age}
+- Пол: {sex}
+- Индекс массы тела (BMI): {bmi}
+- Количество детей: {children}
+- Курение: {smoker}
+- Регион: {region}
+
+Подготовь объяснение на русском языке.
+
+Структура ответа:
+
+### 1. Результат прогнозирования
+Объясни, что означает прогнозируемая сумма.
+
+### 2. Факторы, влияющие на расходы
+Объясни возможное влияние возраста, BMI,
+курения и других характеристик.
+
+### 3. Интерпретация результата
+Объясни, с какими общими закономерностями
+может быть связан полученный прогноз.
+
+### 4. Ограничения прогноза
+Кратко объясни, что прогноз не является
+точной стоимостью страховки.
+
+Важные правила:
+- Не придумывай точные вклады отдельных факторов.
+- Не утверждай, что известны причины конкретного
+  предсказания нейросети.
+- Не делай медицинских диагнозов.
+- Не выдавай прогноз за страховой тариф.
+- Используй понятный русский язык.
+- Ответ должен быть кратким.
+"""
+
+    response = client.responses.create(
+        model="gpt-5-mini",
+        input=prompt,
+        reasoning={"effort": "low"},
+        max_output_tokens=2000
+    )
+
+    explanation = response.output_text
+
+    if not explanation or not explanation.strip():
+        raise ValueError(
+            "OpenAI вернул пустой ответ. "
+            f"Статус: {response.status}. "
+            f"Причина: {response.incomplete_details}"
+        )
+
+    return explanation
+
+
+
+def chat_with_ai(messages, prediction_data=None):
+    client = OpenAI(
+        api_key=st.secrets["OPENAI_API_KEY"],
+        timeout=60.0,
+        max_retries=1
+    )
+
+    instructions = """
+Ты — ИИ-помощник приложения для прогнозирования
+медицинских страховых расходов.
+
+Ты можешь:
+- Объяснять назначение приложения.
+- Рассказывать о факторах страховых расходов.
+- Объяснять BMI, возрастные факторы и влияние курения.
+- Рассказывать, как работают нейронные сети.
+- Объяснять полученные прогнозы.
+
+Отвечай на русском языке, понятно и кратко.
+Не ставь медицинских диагнозов.
+Не представляй прогноз как страховой тариф.
+Не придумывай результаты расчётов нейросети.
+Не утверждай, что известен точный вклад признаков.
+"""
+
+    if prediction_data is not None:
+        prediction = prediction_data["prediction"]
+        data = prediction_data["data"]
+
+        instructions += f"""
+
+Пользователь уже получил прогноз нейросети.
+
+Прогнозируемые расходы: ${prediction:,.2f}.
+
+Характеристики клиента:
+- Возраст: {data['age']}
+- Пол: {data['sex']}
+- BMI: {data['bmi']}
+- Количество детей: {data['children']}
+- Курение: {data['smoker']}
+- Регион: {data['region']}
+
+Учитывай эти данные при ответах.
+Если пользователь просит пересчитать прогноз,
+объясни, что для этого нужно повторно
+запустить нейросеть с изменёнными параметрами.
+Не придумывай числовые результаты.
+"""
+    else:
+        instructions += """
+
+Пользователь ещё не выполнил прогнозирование.
+Если вопрос требует результата нейросети,
+предложи сначала рассчитать прогноз.
+"""
+
+    response = client.responses.create(
+        model="gpt-5-mini",
+        instructions=instructions,
+        input=messages,
+        reasoning={"effort": "low"},
+        max_output_tokens=2000
+    )
+
+    answer = response.output_text
+
+    if not answer or not answer.strip():
+        raise ValueError(
+            "OpenAI вернул пустой ответ. "
+            f"Статус: {response.status}. "
+            f"Детали: {response.incomplete_details}"
+        )
+
+    return answer
+
 
 
 def load_json(path):
@@ -148,12 +298,76 @@ def training_page():
     )
     if st.button("Сделать модель активной"):
         activate(result["experiment_id"])
+    
+
+
+def show_ai_chat(prediction_data=None):
+    st.divider()
+    st.subheader("💬 ИИ-помощник")
+
+    st.caption(
+        "Задавайте вопросы о страховых расходах, "
+        "нейронных сетях и результатах прогнозирования."
+    )
+
+    if "chat_messages" not in st.session_state:
+        st.session_state["chat_messages"] = []
+
+    if prediction_data is not None:
+        st.info(
+            "ИИ-помощник учитывает последний "
+            "рассчитанный прогноз."
+        )
+
+    if st.button("Очистить историю чата"):
+        st.session_state["chat_messages"] = []
+        st.rerun()
+
+    for message in st.session_state["chat_messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    user_message = st.chat_input(
+        "Напишите сообщение ИИ-помощнику...",
+        key="insurance_chat_input"
+    )
+
+    if user_message:
+        st.session_state["chat_messages"].append({
+            "role": "user",
+            "content": user_message
+        })
+
+        with st.chat_message("user"):
+            st.markdown(user_message)
+
+        with st.chat_message("assistant"):
+            with st.spinner("ИИ отвечает..."):
+                try:
+                    answer = chat_with_ai(
+                        st.session_state["chat_messages"],
+                        prediction_data
+                    )
+
+                    st.markdown(answer)
+
+                    st.session_state["chat_messages"].append({
+                        "role": "assistant",
+                        "content": answer
+                    })
+
+                except Exception as error:
+                    st.session_state["chat_messages"].pop()
+                    st.error(
+                        f"Не удалось получить ответ ИИ: {error}"
+                    )
 
 
 def prediction_page():
     st.title("Прогнозирование расходов")
     st.write(
-        "Введите характеристики клиента. Для прогноза используется текущая активная модель."
+        "Введите характеристики клиента. "
+        "Для прогноза используется текущая активная модель."
     )
 
     required = [
@@ -161,6 +375,7 @@ def prediction_page():
         ACTIVE_DIR / "preprocessor.pkl",
         ACTIVE_DIR / "model_info.json",
     ]
+
     if not all(path.exists() for path in required):
         st.warning("Активная модель не найдена. Сначала обучите или выберите модель.")
         return
@@ -172,30 +387,70 @@ def prediction_page():
         return
 
     parameters = get_training_parameters(info)
+
     st.subheader("Текущая active-модель")
     st.caption(info.get("experiment_id", "Идентификатор не указан"))
+
     columns = st.columns(5)
     columns[0].metric("R²", f"{info['r2']:.4f}")
     columns[1].metric("MAE", number(info.get("mae")))
     columns[2].metric("Эпохи", parameters["epochs_actual"])
     columns[3].metric("Batch size", parameters["batch_size"])
-    columns[4].metric("Learning rate", f"{parameters['learning_rate']:g}")
+    columns[4].metric(
+        "Learning rate",
+        f"{parameters['learning_rate']:g}"
+    )
 
+    # Форма ввода данных
     with st.form("prediction_form"):
         left, right = st.columns(2)
+
         with left:
             age = st.number_input("Возраст", 18, 100, 40)
             sex = st.selectbox("Пол", ["Мужской", "Женский"])
-            bmi = st.number_input("BMI", 10.0, 80.0, 30.0)
+            bmi = st.number_input("BMI", 10.0, 70.0, 30.0)
+
         with right:
-            children = st.number_input("Количество детей", 0, 20, 2)
+            children = st.number_input("Количество детей", 0, 10, 2)
             smoker = st.selectbox("Курение", ["Нет", "Да"])
             region = st.selectbox(
-                "Регион", ["northeast", "northwest", "southeast", "southwest"],
+                "Регион",
+                ["northeast", "northwest", "southeast", "southwest"],
                 index=2,
             )
-        calculate = st.form_submit_button("Рассчитать прогноз", type="primary")
 
+        calculate = st.form_submit_button(
+            "Рассчитать прогноз",
+            type="primary"
+        )
+
+    # Сбрасываем старый прогноз при смене модели
+    active_id = info.get("experiment_id")
+
+    if st.session_state.get("prediction_model_id") != active_id:
+        st.session_state.pop("prediction_result", None)
+        st.session_state.pop("ai_explanation", None)
+        st.session_state["prediction_model_id"] = active_id
+
+    # Текущие данные формы
+    current_data = {
+        "age": int(age),
+        "sex": sex,
+        "bmi": float(bmi),
+        "children": int(children),
+        "smoker": smoker,
+        "region": region,
+    }
+
+    # Сбрасываем старый прогноз при изменении данных
+    if "prediction_result" in st.session_state:
+        saved_data = st.session_state["prediction_result"]["data"]
+
+        if saved_data != current_data:
+            st.session_state.pop("prediction_result", None)
+            st.session_state.pop("ai_explanation", None)
+
+    # Расчёт нейросети
     if calculate:
         from predict import predict_charges
 
@@ -208,10 +463,76 @@ def prediction_page():
                 "yes" if smoker == "Да" else "no",
                 region,
             )
-            st.metric("Прогнозируемые расходы", number(prediction))
-            st.caption("Это прогноз модели, а не фактическое значение расходов.")
-        except (ValueError, TypeError, FileNotFoundError, OSError) as error:
+
+            st.session_state["prediction_result"] = {
+                "prediction": float(prediction),
+                "data": current_data.copy(),
+            }
+
+            # Новый прогноз — новое объяснение
+            st.session_state.pop("ai_explanation", None)
+
+        except (
+            ValueError,
+            TypeError,
+            FileNotFoundError,
+            OSError
+        ) as error:
+            st.session_state.pop("prediction_result", None)
+            st.session_state.pop("ai_explanation", None)
             st.error(f"Не удалось выполнить прогноз: {error}")
+
+    # Показываем сохранённый результат
+    result = st.session_state.get("prediction_result")
+
+    if result is None:
+        show_ai_chat()
+        return
+
+    prediction = result["prediction"]
+    data = result["data"]
+
+    st.divider()
+    st.subheader("Результат прогнозирования")
+
+    st.metric(
+        "Прогнозируемые расходы",
+        f"${prediction:,.2f}"
+    )
+
+    st.caption(
+        "Это прогноз модели, а не фактическое "
+        "значение расходов или цена страхового полиса."
+    )
+
+    # Кнопка обращения к OpenAI
+    if st.button(
+        "✨ Объяснить прогноз с помощью ИИ",
+        type="primary"
+    ):
+        with st.spinner("ИИ анализирует результат..."):
+            try:
+                explanation = explain_prediction(
+                    prediction=prediction,
+                    age=data["age"],
+                    sex=data["sex"],
+                    bmi=data["bmi"],
+                    children=data["children"],
+                    smoker=data["smoker"],
+                    region=data["region"],
+                )
+
+                st.session_state["ai_explanation"] = explanation
+
+            except Exception as error:
+                st.session_state.pop("ai_explanation", None)
+                st.error(f"Ошибка обращения к OpenAI: {error}")
+                st.exception(error)
+
+    # Вывод объяснения
+    if st.session_state.get("ai_explanation"):
+        st.subheader("Объяснение ИИ")
+        st.markdown(st.session_state["ai_explanation"])
 
 
 def experiments_page():
@@ -219,18 +540,40 @@ def experiments_page():
     if not EXPERIMENTS_CSV.exists():
         st.warning("История экспериментов пока пуста.")
         return
-    try:
-        experiments = pd.read_csv(EXPERIMENTS_CSV)
-        active_id = load_json(ACTIVE_DIR / "model_info.json").get("experiment_id")
-    except (OSError, json.JSONDecodeError, pd.errors.ParserError) as error:
-        st.error(f"Не удалось прочитать историю экспериментов: {error}")
-        return
-
     columns = [
         "experiment", "epochs_max", "epochs_actual", "batch_size",
         "learning_rate", "early_stopping", "patience",
-        "training_time_seconds", "MAE", "RMSE", "R2",
+        "training_time_seconds", "MAE", "MSE", "RMSE", "R2",
     ]
+    try:
+        experiments = pd.read_csv(EXPERIMENTS_CSV)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+    ) as error:
+        st.error(f"Не удалось прочитать историю экспериментов: {error}")
+        return
+
+    missing_columns = [name for name in columns if name not in experiments.columns]
+    if missing_columns:
+        st.error(
+            "В журнале экспериментов отсутствуют обязательные столбцы: "
+            + ", ".join(missing_columns)
+        )
+        return
+    if experiments.empty:
+        st.info("История экспериментов пока пуста.")
+        return
+
+    try:
+        active_id = load_json(ACTIVE_DIR / "model_info.json").get("experiment_id")
+    except (OSError, json.JSONDecodeError) as error:
+        st.error(f"Не удалось прочитать active-модель: {error}")
+        return
+
     st.dataframe(experiments[columns], width="stretch", hide_index=True)
 
     experiment_id = st.selectbox("Выберите эксперимент", experiments["experiment"])
